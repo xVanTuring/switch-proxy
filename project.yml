@@ -8,13 +8,6 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "1"
-    ENABLE_HARDENED_RUNTIME: "NO"
-    CODE_SIGN_IDENTITY: "-"
-    CODE_SIGN_STYLE: Manual
-    CODE_SIGNING_REQUIRED: "NO"
-    CODE_SIGNING_ALLOWED: "YES"
 
 targets:
   SwitchProxy:
@@ -37,3 +30,17 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: tech.xvanturing.SwitchProxy
         PRODUCT_NAME: SwitchProxy
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        # Local development: ad-hoc signing, hardened runtime off.
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGNING_ALLOWED: "YES"
+          ENABLE_HARDENED_RUNTIME: "NO"
+        # Distribution: Developer ID (automatic) + hardened runtime for notarization.
+        # scripts/release.sh archives Release and re-signs Developer ID on export.
+        Release:
+          CODE_SIGN_STYLE: Automatic
+          DEVELOPMENT_TEAM: T8F5T6HKG8
+          ENABLE_HARDENED_RUNTIME: "YES"

@@ -3,7 +3,9 @@ SwitchProxy.xcodeproj/
 
 # Build output
 build/
+.build/
 DerivedData/
+dist/
 
 # Generated Info.plist
 Support/Info.plist
