@@ -12,6 +12,7 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
     private var tableView: NSTableView!
     private var networkLabel: NSTextField!
     private var portField: NSTextField!
+    private var topConstraint: NSLayoutConstraint!
 
     init(store: ConfigStore,
          monitor: NetworkMonitor,
@@ -96,10 +97,12 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
         row.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(row)
 
+        topConstraint = portRow.topAnchor.constraint(equalTo: content.topAnchor, constant: 14)
+
         NSLayoutConstraint.activate([
             portRow.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             portRow.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            portRow.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
+            topConstraint,
 
             networkLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             networkLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
@@ -114,6 +117,26 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
             row.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
             row.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -14),
         ])
+
+        applyTitleBarHidden(store.hideTitleBar)
+    }
+
+    /// Toggle the window's title bar. When hidden, the content fills under the
+    /// transparent titlebar and is nudged down so it clears the traffic-light buttons
+    /// (which stay visible so the window remains movable/closable).
+    func applyTitleBarHidden(_ hidden: Bool) {
+        guard let window = window else { return }
+        if hidden {
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.styleMask.insert(.fullSizeContentView)
+            topConstraint?.constant = 36
+        } else {
+            window.titleVisibility = .visible
+            window.titlebarAppearsTransparent = false
+            window.styleMask.remove(.fullSizeContentView)
+            topConstraint?.constant = 14
+        }
     }
 
     private func makeButton(_ title: String, _ action: Selector) -> NSButton {

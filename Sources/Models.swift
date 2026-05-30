@@ -30,6 +30,7 @@ final class ConfigStore {
     var activeID: UUID?
     var autoSwitch: Bool = true
     var listenPort: Int = 1087
+    var hideTitleBar: Bool = false
 
     private let lock = NSLock()
     private var snapshot: ProxyConfig?
@@ -99,10 +100,12 @@ final class ConfigStore {
         var activeID: UUID?
         var autoSwitch: Bool
         var listenPort: Int
+        var hideTitleBar: Bool?   // optional for backward compatibility with older data
     }
 
     func save() {
-        let p = Persisted(configs: configs, activeID: activeID, autoSwitch: autoSwitch, listenPort: listenPort)
+        let p = Persisted(configs: configs, activeID: activeID, autoSwitch: autoSwitch,
+                          listenPort: listenPort, hideTitleBar: hideTitleBar)
         if let data = try? JSONEncoder().encode(p) {
             defaults.set(data, forKey: storageKey)
         }
@@ -116,6 +119,7 @@ final class ConfigStore {
         activeID = p.activeID
         autoSwitch = p.autoSwitch
         listenPort = p.listenPort
+        hideTitleBar = p.hideTitleBar ?? false
     }
 
     private func refreshSnapshot() {

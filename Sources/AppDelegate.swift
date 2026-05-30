@@ -22,6 +22,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
         applyAuto()
+
+        // A second launch asks the running instance (via this notification) to show
+        // its manager window.
+        let name = Notification.Name("\(Bundle.main.bundleIdentifier ?? "tech.xvanturing.SwitchProxy").showManager")
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(handleShowManager), name: name, object: nil)
+    }
+
+    /// Re-show the manager window when the app is reopened (Finder/Dock/`open`).
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        menuController?.presentManager()
+        return true
+    }
+
+    @objc private func handleShowManager() {
+        NSApp.activate(ignoringOtherApps: true)
+        menuController?.presentManager()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

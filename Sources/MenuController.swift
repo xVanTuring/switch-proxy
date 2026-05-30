@@ -68,6 +68,10 @@ final class MenuController: NSObject, NSMenuDelegate {
         loginItem.state = loginOn ? .on : .off
         menu.addItem(loginItem)
 
+        let hideTitle = item("隐藏标题栏", #selector(toggleHideTitleBar))
+        hideTitle.state = store.hideTitleBar ? .on : .off
+        menu.addItem(hideTitle)
+
         menu.addItem(.separator())
         menu.addItem(item("退出", #selector(quit), key: "q"))
     }
@@ -110,6 +114,12 @@ final class MenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openManager() {
+        presentManager()
+    }
+
+    /// Show (and create if needed) the manager window. Also used for "reopen" and
+    /// the single-instance "show on second launch" behavior.
+    func presentManager() {
         if managerWindowController == nil {
             managerWindowController = ProxyManagerWindowController(
                 store: store,
@@ -119,6 +129,7 @@ final class MenuController: NSObject, NSMenuDelegate {
             )
         }
         NSApp.activate(ignoringOtherApps: true)
+        managerWindowController?.applyTitleBarHidden(store.hideTitleBar)
         managerWindowController?.refresh()
         managerWindowController?.showWindow(nil)
         managerWindowController?.window?.makeKeyAndOrderFront(nil)
@@ -144,6 +155,12 @@ final class MenuController: NSObject, NSMenuDelegate {
         } else {
             _ = SystemProxy.enable(port: store.listenPort)
         }
+    }
+
+    @objc private func toggleHideTitleBar() {
+        store.hideTitleBar.toggle()
+        store.save()
+        managerWindowController?.applyTitleBarHidden(store.hideTitleBar)
     }
 
     @objc private func toggleLaunchAtLogin() {
