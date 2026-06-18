@@ -1,9 +1,12 @@
 import Foundation
 import Network
 
-/// Local forwarding HTTP proxy. Listens on 127.0.0.1:<port> and tunnels each client
-/// connection to the currently-active upstream (HTTP proxy, SOCKS5 proxy, or direct).
-/// The system proxy points here permanently; switching the upstream is internal.
+/// Local forwarding proxy with a mixed inbound port: the same 127.0.0.1:<port>
+/// accepts both HTTP-proxy and SOCKS5 clients (detected from the first byte) and
+/// tunnels each connection to the currently-active upstream (HTTP proxy, SOCKS5
+/// proxy, or direct). The system proxy points here permanently as an HTTP proxy;
+/// apps that prefer SOCKS can use socks5h://127.0.0.1:<port> on the same port.
+/// Switching the upstream is internal.
 final class ProxyRelay {
     private var listener: NWListener?
     private let listenerQueue = DispatchQueue(label: "switchproxy.relay.listener")
@@ -75,6 +78,9 @@ private final class RelaySession: Hashable {
     private let queue: DispatchQueue
     private var server: NWConnection?
     private var finished = false
+    /// Bytes already read from the upstream during handshake that belong to the tunnel
+    /// (e.g. early data after an HTTP CONNECT 200) and must be flushed to the client first.
+    private var earlyServerData = Data()
 
     var onFinished: (() -> Void)?
 
@@ -95,7 +101,7 @@ private final class RelaySession: Hashable {
             }
         }
         client.start(queue: queue)
-        readHeader()
+        detectProtocol()
     }
 
     func close() {
@@ -112,27 +118,158 @@ private final class RelaySession: Hashable {
         }
     }
 
-    // MARK: Request parsing
+    // MARK: Inbound protocol detection
 
-    private func readHeader(_ buffer: Data = Data()) {
+    /// Peek the first byte to route the connection: 0x05 == SOCKS5, otherwise HTTP.
+    /// (HTTP request lines always begin with an ASCII method letter, never 0x05.)
+    private func detectProtocol(_ buffer: Data = Data()) {
+        if let first = buffer.first {
+            if first == 0x05 {
+                handleSocksGreeting(buffer)
+            } else {
+                readHeader(buffer)
+            }
+            return
+        }
         client.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self = self else { return }
             if error != nil { self.close(); return }
             var buf = buffer
             if let data = data { buf.append(data) }
+            if (data?.isEmpty ?? true) && isComplete { self.close(); return }
+            self.detectProtocol(buf)
+        }
+    }
 
-            if let range = buf.range(of: Data("\r\n\r\n".utf8)) {
-                let header = buf.subdata(in: buf.startIndex..<range.upperBound)
-                let leftover = buf.subdata(in: range.upperBound..<buf.endIndex)
-                self.process(header: header, leftover: leftover)
-            } else if buf.count > 256 * 1024 {
-                self.close()
-            } else if isComplete {
-                self.close()
-            } else {
-                self.readHeader(buf)
+    // MARK: HTTP inbound parsing
+
+    private func readHeader(_ buffer: Data = Data()) {
+        // Process as soon as the buffer holds a full header — the first chunk often does.
+        if let range = buffer.range(of: Data("\r\n\r\n".utf8)) {
+            let header = buffer.subdata(in: buffer.startIndex..<range.upperBound)
+            let leftover = buffer.subdata(in: range.upperBound..<buffer.endIndex)
+            process(header: header, leftover: leftover)
+            return
+        }
+        if buffer.count > 256 * 1024 { close(); return }
+        client.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self = self else { return }
+            if error != nil { self.close(); return }
+            var buf = buffer
+            if let data = data { buf.append(data) }
+            if (data?.isEmpty ?? true) && isComplete { self.close(); return }
+            self.readHeader(buf)
+        }
+    }
+
+    // MARK: SOCKS5 inbound (server side)
+
+    /// Accumulate from the client until the buffer holds at least `n` bytes.
+    private func readSocks(atLeast n: Int, from buffer: Data, _ completion: @escaping (Data) -> Void) {
+        if buffer.count >= n { completion(buffer); return }
+        client.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self = self else { return }
+            if error != nil { self.close(); return }
+            var buf = buffer
+            if let data = data { buf.append(data) }
+            if (data?.isEmpty ?? true) && isComplete { self.close(); return }
+            self.readSocks(atLeast: n, from: buf, completion)
+        }
+    }
+
+    /// Method-negotiation: VER(0x05) NMETHODS METHODS... We always select "no auth"
+    /// (the listener is localhost-only).
+    private func handleSocksGreeting(_ initial: Data) {
+        readSocks(atLeast: 2, from: initial) { [weak self] buf in
+            guard let self = self else { return }
+            let nmethods = Int([UInt8](buf)[1])
+            self.readSocks(atLeast: 2 + nmethods, from: buf) { [weak self] buf in
+                guard let self = self else { return }
+                self.client.send(content: Data([0x05, 0x00]), completion: .contentProcessed { err in
+                    if err != nil { self.close(); return }
+                    let consumed = 2 + nmethods
+                    let leftover = buf.subdata(in: buf.index(buf.startIndex, offsetBy: consumed)..<buf.endIndex)
+                    self.readSocksRequest(leftover)
+                })
             }
         }
+    }
+
+    /// Request: VER CMD RSV ATYP DST.ADDR DST.PORT. Only CONNECT (0x01) is supported.
+    private func readSocksRequest(_ initial: Data) {
+        readSocks(atLeast: 4, from: initial) { [weak self] buf in
+            guard let self = self else { return }
+            let b = [UInt8](buf)
+            guard b[0] == 0x05, b[1] == 0x01 else { self.sendSocksFailureAndClose(); return }
+            switch b[3] {
+            case 0x01: // IPv4
+                self.readSocks(atLeast: 4 + 4 + 2, from: buf) { buf in
+                    let bb = [UInt8](buf)
+                    let host = "\(bb[4]).\(bb[5]).\(bb[6]).\(bb[7])"
+                    let port = (Int(bb[8]) << 8) | Int(bb[9])
+                    self.socksConnect(host: host, port: port, consumed: 4 + 4 + 2, buffer: buf)
+                }
+            case 0x04: // IPv6
+                self.readSocks(atLeast: 4 + 16 + 2, from: buf) { buf in
+                    let bb = [UInt8](buf)
+                    let host = Self.formatIPv6(Array(bb[4..<20]))
+                    let port = (Int(bb[20]) << 8) | Int(bb[21])
+                    self.socksConnect(host: host, port: port, consumed: 4 + 16 + 2, buffer: buf)
+                }
+            case 0x03: // domain name
+                self.readSocks(atLeast: 5, from: buf) { buf in
+                    let len = Int([UInt8](buf)[4])
+                    let total = 4 + 1 + len + 2
+                    self.readSocks(atLeast: total, from: buf) { buf in
+                        let bb = [UInt8](buf)
+                        let host = String(bytes: bb[5..<(5 + len)], encoding: .utf8) ?? ""
+                        let port = (Int(bb[5 + len]) << 8) | Int(bb[5 + len + 1])
+                        self.socksConnect(host: host, port: port, consumed: total, buffer: buf)
+                    }
+                }
+            default:
+                self.sendSocksFailureAndClose()
+            }
+        }
+    }
+
+    /// Establish the tunnel for a parsed SOCKS CONNECT, reply, then pipe.
+    private func socksConnect(host: String, port: Int, consumed: Int, buffer: Data) {
+        guard !host.isEmpty else { sendSocksFailureAndClose(); return }
+        let leftover = buffer.subdata(in: buffer.index(buffer.startIndex, offsetBy: consumed)..<buffer.endIndex)
+        dial(host: host, port: port) { [weak self] ok in
+            guard let self = self else { return }
+            guard ok else { self.sendSocksFailureAndClose(); return }
+            // Success: VER REP=0 RSV ATYP=IPv4 BND.ADDR=0.0.0.0 BND.PORT=0
+            let reply = Data([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            self.client.send(content: reply, completion: .contentProcessed { err in
+                if err != nil { self.close(); return }
+                if !leftover.isEmpty, let server = self.server {
+                    server.send(content: leftover, completion: .contentProcessed { e in
+                        if e != nil { self.close(); return }
+                        self.beginTunnel()
+                    })
+                } else {
+                    self.beginTunnel()
+                }
+            })
+        }
+    }
+
+    private func sendSocksFailureAndClose() {
+        let reply = Data([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]) // REP=1 general failure
+        client.send(content: reply, completion: .contentProcessed { [weak self] _ in self?.close() })
+    }
+
+    private static func formatIPv6(_ bytes: [UInt8]) -> String {
+        guard bytes.count == 16 else { return "" }
+        var groups: [String] = []
+        var i = 0
+        while i < 16 {
+            groups.append(String((UInt16(bytes[i]) << 8) | UInt16(bytes[i + 1]), radix: 16))
+            i += 2
+        }
+        return groups.joined(separator: ":")
     }
 
     private func process(header: Data, leftover: Data) {
@@ -197,12 +334,20 @@ private final class RelaySession: Hashable {
         return NWConnection(host: NWEndpoint.Host(host), port: p, using: .tcp)
     }
 
-    /// Establish a connection to (host, port) via the SOCKS5 upstream or directly.
+    /// Establish a raw byte tunnel to (host, port) through the active upstream
+    /// (SOCKS5 handshake, HTTP CONNECT) or directly. Used by the SOCKS inbound path
+    /// and the HTTP-inbound CONNECT path for SOCKS5/direct upstreams.
     private func dial(host: String, port: Int, completion: @escaping (Bool) -> Void) {
         var done = false
         func finish(_ ok: Bool) { if done { return }; done = true; completion(ok) }
 
-        if let up = upstream, up.kind == .socks5 {
+        guard let up = upstream else {
+            openServer(host: host, port: port, completion: completion)
+            return
+        }
+
+        switch up.kind {
+        case .socks5:
             let conn = makeConnection(up.host, up.port)
             server = conn
             conn.stateUpdateHandler = { state in
@@ -216,9 +361,67 @@ private final class RelaySession: Hashable {
                 }
             }
             conn.start(queue: queue)
-        } else {
-            openServer(host: host, port: port, completion: completion)
+        case .http:
+            let conn = makeConnection(up.host, up.port)
+            server = conn
+            conn.stateUpdateHandler = { [weak self] state in
+                switch state {
+                case .ready:
+                    self?.httpConnect(over: conn, host: host, port: port, upstream: up) { ok in finish(ok) }
+                case .failed, .cancelled:
+                    finish(false)
+                default: break
+                }
+            }
+            conn.start(queue: queue)
         }
+    }
+
+    /// Issue an HTTP CONNECT to an HTTP upstream and wait for a 2xx before tunneling.
+    private func httpConnect(over conn: NWConnection, host: String, port: Int,
+                             upstream up: ProxyConfig, completion: @escaping (Bool) -> Void) {
+        var req = "CONNECT \(host):\(port) HTTP/1.1\r\nHost: \(host):\(port)\r\n"
+        if let user = up.username, !user.isEmpty {
+            let token = Data("\(user):\(up.password ?? "")".utf8).base64EncodedString()
+            req += "Proxy-Authorization: Basic \(token)\r\n"
+        }
+        req += "\r\n"
+        conn.send(content: Data(req.utf8), completion: .contentProcessed { [weak self] err in
+            guard let self = self else { return }
+            if err != nil { completion(false); return }
+            self.readHTTPConnectResponse(over: conn, buffer: Data(), completion: completion)
+        })
+    }
+
+    private func readHTTPConnectResponse(over conn: NWConnection, buffer: Data,
+                                         completion: @escaping (Bool) -> Void) {
+        if let range = buffer.range(of: Data("\r\n\r\n".utf8)) {
+            let statusLine = String(data: buffer.subdata(in: buffer.startIndex..<range.lowerBound),
+                                    encoding: .isoLatin1)?.components(separatedBy: "\r\n").first ?? ""
+            let ok = Self.isHTTP2xx(statusLine)
+            if ok {
+                // Any bytes past the response headers are early tunnel data for the client.
+                let leftover = buffer.subdata(in: range.upperBound..<buffer.endIndex)
+                if !leftover.isEmpty { earlyServerData = leftover }
+            }
+            completion(ok)
+            return
+        }
+        if buffer.count > 64 * 1024 { completion(false); return }
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self = self else { return }
+            if error != nil { completion(false); return }
+            var buf = buffer
+            if let data = data { buf.append(data) }
+            if (data?.isEmpty ?? true) && isComplete { completion(false); return }
+            self.readHTTPConnectResponse(over: conn, buffer: buf, completion: completion)
+        }
+    }
+
+    private static func isHTTP2xx(_ statusLine: String) -> Bool {
+        let parts = statusLine.split(separator: " ")
+        guard parts.count >= 2, let code = Int(parts[1]) else { return false }
+        return (200...299).contains(code)
     }
 
     /// Direct TCP connection (no SOCKS handshake).
@@ -257,8 +460,19 @@ private final class RelaySession: Hashable {
 
     private func beginTunnel() {
         guard let server = self.server else { close(); return }
-        pipe(from: client, to: server)
-        pipe(from: server, to: client)
+        if !earlyServerData.isEmpty {
+            let early = earlyServerData
+            earlyServerData = Data()
+            client.send(content: early, completion: .contentProcessed { [weak self] err in
+                guard let self = self else { return }
+                if err != nil { self.close(); return }
+                self.pipe(from: self.client, to: server)
+                self.pipe(from: server, to: self.client)
+            })
+        } else {
+            pipe(from: client, to: server)
+            pipe(from: server, to: client)
+        }
     }
 
     private func pipe(from: NWConnection, to: NWConnection) {

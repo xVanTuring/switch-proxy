@@ -7,15 +7,16 @@
 
 ```
 系统代理 ──固定指向──► 127.0.0.1:1087 (本地中转) ──转发──► 当前上游 (HTTP / SOCKS5 / 直连)
-                                  ▲
-                       网络变化时自动选择已绑定的上游
+   应用也可直接用 ──► socks5h://127.0.0.1:1087        ▲
+        (同一端口同时认 HTTP 和 SOCKS5)    网络变化时自动选择已绑定的上游
 ```
 
 ## 功能
 
 - 纯菜单栏 App（无 Dock 图标，`LSUIElement`）
+- **本地监听为 HTTP / SOCKS5 混合端口**（按首字节自动识别）：系统代理走 HTTP,需要 SOCKS 的应用直接指 `socks5h://127.0.0.1:端口`,同一端口即可
 - 上游支持 **HTTP** 和 **SOCKS5**（均可带用户名/密码认证）
-- 处理 HTTPS（`CONNECT` 隧道）与普通 HTTP
+- 处理 HTTPS（`CONNECT` 隧道）与普通 HTTP；目标域名始终交由上游解析（远端 DNS,避免本地污染）
 - **自动按网络切换**：把"当前网络"绑定到某个配置，之后到达该网络即自动启用
 - 菜单内快速手动切换 / 直连
 - **「管理代理」窗口**：集中添加、编辑、删除配置，并把当前网络绑定到所选配置
@@ -63,8 +64,8 @@ open SwitchProxy.xcodeproj
 | `main.swift` | 入口，设为 `.accessory`（仅菜单栏） |
 | `AppDelegate.swift` | 组装各组件、自动切换协调 |
 | `Models.swift` | `ProxyConfig` 模型与 `ConfigStore`（持久化 + 线程安全快照） |
-| `ProxyRelay.swift` | 本地中转：监听、解析请求、转发到 HTTP/SOCKS5/直连、双向管道 |
-| `Socks5.swift` | SOCKS5 客户端握手（含用户名/密码认证） |
+| `ProxyRelay.swift` | 本地中转：混合端口监听（HTTP/SOCKS5 自动识别）、解析请求、转发到 HTTP/SOCKS5/直连、双向管道 |
+| `Socks5.swift` | SOCKS5 客户端握手（连接上游时使用，含用户名/密码认证） |
 | `NetworkMonitor.swift` | 监听网络变化、计算网络标识（SSID / 网关） |
 | `SystemProxy.swift` | 通过 `networksetup` 配置/取消系统代理 |
 | `MenuController.swift` | 菜单构建与所有菜单动作（含开机自启、改端口协调） |
