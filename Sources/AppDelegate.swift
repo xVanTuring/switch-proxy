@@ -23,6 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         applyAuto()
 
+        // Remembered intent: if the system proxy was left on, re-apply (override) on launch.
+        if store.systemProxyEnabled {
+            _ = SystemProxy.enable(port: store.listenPort)
+        }
+
         // A second launch asks the running instance (via this notification) to show
         // its manager window.
         let name = Notification.Name("\(Bundle.main.bundleIdentifier ?? "tech.xvanturing.SwitchProxy").showManager")
@@ -42,9 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Avoid leaving the system without internet: if the system proxy still points
-        // at our relay, turn it off before we exit.
-        if SystemProxy.isEnabled(port: store.listenPort) {
+        // Remembered intent: clear the system proxy on quit if it was on. Also clear it
+        // defensively if it still points at our relay, so we never strand the network.
+        if store.systemProxyEnabled || SystemProxy.isEnabled(port: store.listenPort) {
             _ = SystemProxy.disable()
         }
         relay.stop()

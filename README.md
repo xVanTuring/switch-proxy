@@ -22,8 +22,9 @@
 - **「管理代理」窗口**：集中添加、编辑、删除配置，并把当前网络绑定到所选配置
 - **本地监听端口可配置**（在「管理代理」窗口里修改；改端口会自动重启中转，若系统代理已开启会自动重新指向新端口）
 - **开机自启**（菜单内开关，基于 `SMAppService` 登录项）
-- 一键「设为系统代理 / 取消系统代理」（写入所有启用的网络服务，单次管理员授权）
-- 退出时若系统代理仍指向本中转，会自动取消，避免断网
+- **记忆式系统代理**：开关状态会记住——**启动时若为开则自动恢复（覆盖系统设置），退出时若为开则自动清除**，避免断网
+- **首次授权后免密**：第一次「设为系统代理」会输一次管理员密码,同时安装一条仅放行 `networksetup` 代理子命令的 sudoers 规则（`/etc/sudoers.d/switchproxy`）；之后开关 / 启动 / 退出全程静默,不再弹密码
+  > 想撤销免密授权:`sudo rm /etc/sudoers.d/switchproxy` 即可
 
 ## 网络识别方式
 
@@ -67,7 +68,7 @@ open SwitchProxy.xcodeproj
 | `ProxyRelay.swift` | 本地中转：混合端口监听（HTTP/SOCKS5 自动识别）、解析请求、转发到 HTTP/SOCKS5/直连、双向管道 |
 | `Socks5.swift` | SOCKS5 客户端握手（连接上游时使用，含用户名/密码认证） |
 | `NetworkMonitor.swift` | 监听网络变化、计算网络标识（SSID / 网关） |
-| `SystemProxy.swift` | 通过 `networksetup` 配置/取消系统代理 |
+| `SystemProxy.swift` | 通过 `networksetup` 配置/取消系统代理；首次安装 sudoers 免密规则,之后 `sudo -n` 静默执行 |
 | `MenuController.swift` | 菜单构建与所有菜单动作（含开机自启、改端口协调） |
 | `ProxyManagerWindowController.swift` | 「管理代理」窗口：端口设置 + 配置列表 + 增删改 + 绑定网络 |
 | `ConfigEditor.swift` | 添加/编辑配置的表单 |
@@ -78,3 +79,4 @@ open SwitchProxy.xcodeproj
 - 普通 HTTP（非 HTTPS）经 SOCKS5/直连时会强制 `Connection: close`（每连接一个请求），HTTPS 不受影响。
 - 配置（含明文密码）保存在 `UserDefaults`；如需更高安全性可改用 Keychain。
 - App 未做 Developer ID 签名/公证，首次运行可能需在「系统设置 → 隐私与安全性」放行。
+- 免密依赖一条 sudoers 规则；若未安装（首次或被手动删除），「设为系统代理」会回退到管理员弹窗（启动/退出同理会弹一次）。

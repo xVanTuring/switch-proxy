@@ -58,7 +58,7 @@ final class MenuController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let sysOn = SystemProxy.isEnabled(port: store.listenPort)
+        let sysOn = store.systemProxyEnabled
         let sysItem = item(sysOn ? "取消系统代理" : "设为系统代理", #selector(toggleSystemProxy))
         sysItem.state = sysOn ? .on : .off
         menu.addItem(sysItem)
@@ -139,7 +139,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     /// if it was already enabled (so we don't strand it on the old port).
     private func applyListenPort(_ port: Int) -> Bool {
         guard (1...65535).contains(port), port != store.listenPort else { return false }
-        let wasSystemProxy = SystemProxy.isEnabled(port: store.listenPort)
+        let wasSystemProxy = store.systemProxyEnabled
         store.listenPort = port
         store.save()
         relay.restart(port: UInt16(port))
@@ -150,10 +150,14 @@ final class MenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleSystemProxy() {
-        if SystemProxy.isEnabled(port: store.listenPort) {
+        if store.systemProxyEnabled {
             _ = SystemProxy.disable()
-        } else {
-            _ = SystemProxy.enable(port: store.listenPort)
+            store.systemProxyEnabled = false
+            store.save()
+        } else if SystemProxy.enable(port: store.listenPort) {
+            // Only remember it as on if the apply (incl. one-time rule install) succeeded.
+            store.systemProxyEnabled = true
+            store.save()
         }
     }
 

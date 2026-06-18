@@ -31,6 +31,8 @@ final class ConfigStore {
     var autoSwitch: Bool = true
     var listenPort: Int = 1087
     var hideTitleBar: Bool = false
+    /// Remembered intent: re-apply the system proxy on launch, clear it on quit.
+    var systemProxyEnabled: Bool = false
 
     private let lock = NSLock()
     private var snapshot: ProxyConfig?
@@ -100,12 +102,14 @@ final class ConfigStore {
         var activeID: UUID?
         var autoSwitch: Bool
         var listenPort: Int
-        var hideTitleBar: Bool?   // optional for backward compatibility with older data
+        var hideTitleBar: Bool?          // optional for backward compatibility with older data
+        var systemProxyEnabled: Bool?    // optional for backward compatibility with older data
     }
 
     func save() {
         let p = Persisted(configs: configs, activeID: activeID, autoSwitch: autoSwitch,
-                          listenPort: listenPort, hideTitleBar: hideTitleBar)
+                          listenPort: listenPort, hideTitleBar: hideTitleBar,
+                          systemProxyEnabled: systemProxyEnabled)
         if let data = try? JSONEncoder().encode(p) {
             defaults.set(data, forKey: storageKey)
         }
@@ -120,6 +124,7 @@ final class ConfigStore {
         autoSwitch = p.autoSwitch
         listenPort = p.listenPort
         hideTitleBar = p.hideTitleBar ?? false
+        systemProxyEnabled = p.systemProxyEnabled ?? false
     }
 
     private func refreshSnapshot() {
