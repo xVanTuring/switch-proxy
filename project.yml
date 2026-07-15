@@ -20,8 +20,8 @@ targets:
       properties:
         CFBundleName: SwitchProxy
         CFBundleDisplayName: Switch Proxy
-        CFBundleShortVersionString: "1.1.0"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "1.2.0"
+        CFBundleVersion: "4"
         LSMinimumSystemVersion: "13.0"
         LSUIElement: true
         NSHumanReadableCopyright: ""
