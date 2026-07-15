@@ -37,11 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Re-show the manager window when the app is reopened (Finder/Dock/`open`).
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        restoreStatusItem()
         menuController?.presentManager()
         return true
     }
 
     @objc private func handleShowManager() {
+        restoreStatusItem()
         NSApp.activate(ignoringOtherApps: true)
         menuController?.presentManager()
     }
@@ -66,8 +68,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menuController = MenuController(store: store, relay: relay, monitor: monitor)
         menuController.onApplyAuto = { [weak self] in self?.applyAuto() }
+        menuController.onHideStatusItem = { [weak self] in self?.hideStatusItem() }
         menu.delegate = menuController
         statusItem.menu = menu
+    }
+
+    private func hideStatusItem() {
+        statusItem.isVisible = false
+    }
+
+    /// Bring the icon back after a hide. Called on the single-instance
+    /// "reopen" paths (relaunch from Launchpad/Finder/Dock).
+    private func restoreStatusItem() {
+        statusItem.isVisible = true
     }
 
     /// If auto-switch is on, activate the config bound to the current network.

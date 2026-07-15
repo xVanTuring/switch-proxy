@@ -9,6 +9,9 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     /// Re-apply auto-switch after store/network changes.
     var onApplyAuto: (() -> Void)?
+    /// Hide the status bar icon. Restored when the app is launched again from
+    /// Launchpad/Finder (single-instance flow re-shows it).
+    var onHideStatusItem: (() -> Void)?
 
     private var managerWindowController: ProxyManagerWindowController?
 
@@ -71,6 +74,8 @@ final class MenuController: NSObject, NSMenuDelegate {
         let hideTitle = item("隐藏标题栏", #selector(toggleHideTitleBar))
         hideTitle.state = store.hideTitleBar ? .on : .off
         menu.addItem(hideTitle)
+
+        menu.addItem(item("隐藏菜单栏图标", #selector(hideStatusItem)))
 
         menu.addItem(.separator())
         menu.addItem(item("退出", #selector(quit), key: "q"))
@@ -165,6 +170,16 @@ final class MenuController: NSObject, NSMenuDelegate {
         store.hideTitleBar.toggle()
         store.save()
         managerWindowController?.applyTitleBarHidden(store.hideTitleBar)
+    }
+
+    @objc private func hideStatusItem() {
+        let alert = NSAlert()
+        alert.messageText = "隐藏菜单栏图标？"
+        alert.informativeText = "隐藏后菜单栏中将不再显示图标。如需恢复，请从「启动台」或「应用程序」文件夹重新打开 Switch Proxy。"
+        alert.addButton(withTitle: "隐藏")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        onHideStatusItem?()
     }
 
     @objc private func toggleLaunchAtLogin() {
