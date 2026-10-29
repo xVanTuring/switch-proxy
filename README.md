@@ -18,12 +18,16 @@
 - 上游支持 **HTTP** 和 **SOCKS5**（均可带用户名/密码认证）
 - 处理 HTTPS（`CONNECT` 隧道）与普通 HTTP；目标域名始终交由上游解析（远端 DNS,避免本地污染）
 - **自动按网络切换**：把"当前网络"绑定到某个配置，之后到达该网络即自动启用
+- **代理忽略列表**（「管理代理」窗口 →「代理忽略列表…」）：命中的地址不走上游、直接连接。默认包含常见局域网网段（`10/8`、`172.16/12`、`192.168/16`、`169.254/16`、回环、`*.local`）以及 Tailscale 设备地址（`100.64.0.0/10`、`fd7a:115c:a1e0::/48`、`*.ts.net`）。
+  同一份列表同时用于：系统代理的「忽略这些主机与域的代理设置」，以及本地中转本身（所以直接用 `socks5h://` 或 `http_proxy` 环境变量连中转的程序也会直连这些地址）。
+  支持写法：域名、`*.后缀`、IP、网段（`192.168.0.0/16` 或 `169.254/16`）。只按目标地址的字面值匹配，不做 DNS 解析
 - 菜单内快速手动切换 / 直连
 - **「管理代理」窗口**：集中添加、编辑、删除配置，并把当前网络绑定到所选配置
 - **本地监听端口可配置**（在「管理代理」窗口里修改；改端口会自动重启中转，若系统代理已开启会自动重新指向新端口）
 - **开机自启**（菜单内开关，基于 `SMAppService` 登录项）
 - **记忆式系统代理**：开关状态会记住——**启动时若为开则自动恢复（覆盖系统设置），退出时若为开则自动清除**，避免断网
 - **首次授权后免密**：第一次「设为系统代理」会输一次管理员密码,同时安装一条仅放行 `networksetup` 代理子命令的 sudoers 规则（`/etc/sudoers.d/switchproxy`）；之后开关 / 启动 / 退出全程静默,不再弹密码
+  > 旧版本装的规则不含 `-setproxybypassdomains`,升级后第一次设置系统代理会再弹一次管理员密码,自动更新规则
   > 想撤销免密授权:`sudo rm /etc/sudoers.d/switchproxy` 即可
 
 ## 网络识别方式
@@ -65,13 +69,15 @@ open SwitchProxy.xcodeproj
 | `main.swift` | 入口，设为 `.accessory`（仅菜单栏） |
 | `AppDelegate.swift` | 组装各组件、自动切换协调 |
 | `Models.swift` | `ProxyConfig` 模型与 `ConfigStore`（持久化 + 线程安全快照） |
-| `ProxyRelay.swift` | 本地中转：混合端口监听（HTTP/SOCKS5 自动识别）、解析请求、转发到 HTTP/SOCKS5/直连、双向管道 |
+| `ProxyRelay.swift` | 本地中转：混合端口监听（HTTP/SOCKS5 自动识别）、解析请求、转发到 HTTP/SOCKS5/直连（命中忽略列表时直连）、双向管道 |
+| `ProxyBypass.swift` | 代理忽略列表：默认条目、解析与匹配（域名 / 通配后缀 / IP / 网段） |
 | `Socks5.swift` | SOCKS5 客户端握手（连接上游时使用，含用户名/密码认证） |
 | `NetworkMonitor.swift` | 监听网络变化、计算网络标识（SSID / 网关） |
-| `SystemProxy.swift` | 通过 `networksetup` 配置/取消系统代理；首次安装 sudoers 免密规则,之后 `sudo -n` 静默执行 |
+| `SystemProxy.swift` | 通过 `networksetup` 配置/取消系统代理（含忽略列表）；首次安装 sudoers 免密规则,之后 `sudo -n` 静默执行 |
 | `MenuController.swift` | 菜单构建与所有菜单动作（含开机自启、改端口协调） |
 | `ProxyManagerWindowController.swift` | 「管理代理」窗口：端口设置 + 配置列表 + 增删改 + 绑定网络 |
 | `ConfigEditor.swift` | 添加/编辑配置的表单 |
+| `BypassEditor.swift` | 编辑代理忽略列表的表单 |
 | `LaunchAtLogin.swift` | 开机自启（`SMAppService` 登录项）封装 |
 
 ## 已知限制

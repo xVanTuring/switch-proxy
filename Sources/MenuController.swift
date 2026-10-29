@@ -130,7 +130,8 @@ final class MenuController: NSObject, NSMenuDelegate {
                 store: store,
                 monitor: monitor,
                 onChange: { [weak self] in self?.onApplyAuto?() },
-                onApplyPort: { [weak self] port in self?.applyListenPort(port) ?? false }
+                onApplyPort: { [weak self] port in self?.applyListenPort(port) ?? false },
+                onApplyBypass: { [weak self] list in self?.applyBypassList(list) }
             )
         }
         NSApp.activate(ignoringOtherApps: true)
@@ -149,9 +150,19 @@ final class MenuController: NSObject, NSMenuDelegate {
         store.save()
         relay.restart(port: UInt16(port))
         if wasSystemProxy {
-            _ = SystemProxy.enable(port: port)
+            _ = SystemProxy.enable(port: port, bypass: store.bypassList)
         }
         return true
+    }
+
+    /// Save the ignore list. The relay picks it up for new connections; the system
+    /// proxy's bypass list is re-applied if the system proxy is on.
+    private func applyBypassList(_ list: [String]) {
+        store.bypassList = list
+        store.save()
+        if store.systemProxyEnabled {
+            _ = SystemProxy.enable(port: store.listenPort, bypass: list)
+        }
     }
 
     @objc private func toggleSystemProxy() {
@@ -159,7 +170,7 @@ final class MenuController: NSObject, NSMenuDelegate {
             _ = SystemProxy.disable()
             store.systemProxyEnabled = false
             store.save()
-        } else if SystemProxy.enable(port: store.listenPort) {
+        } else if SystemProxy.enable(port: store.listenPort, bypass: store.bypassList) {
             // Only remember it as on if the apply (incl. one-time rule install) succeeded.
             store.systemProxyEnabled = true
             store.save()

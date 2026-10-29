@@ -59,22 +59,28 @@ enum SystemProxy {
             && out.contains("Port: \(port)")
     }
 
+    /// Point the system proxy at the relay and set its ignore list ("Bypass proxy
+    /// settings for these Hosts & Domains") to `bypass`.
     @discardableResult
-    static func enable(port: Int) -> Bool { setSystemProxy(on: true, port: port) }
+    static func enable(port: Int, bypass: [String]) -> Bool {
+        setSystemProxy(on: true, port: port, bypass: bypass)
+    }
 
     @discardableResult
-    static func disable() -> Bool { setSystemProxy(on: false, port: 0) }
+    static func disable() -> Bool { setSystemProxy(on: false, port: 0, bypass: []) }
 
     /// Point the system web/secure-web proxy at 127.0.0.1:port (on) or turn it off.
     /// Runs silently via passwordless sudo when the rule is installed; otherwise falls
     /// back to a single admin prompt that also installs the rule for next time.
-    private static func setSystemProxy(on: Bool, port: Int) -> Bool {
+    private static func setSystemProxy(on: Bool, port: Int, bypass: [String]) -> Bool {
         let services = targetServices()
         guard !services.isEmpty else { return false }
 
         var cmds: [[String]] = []
         for s in services {
             if on {
+                // networksetup clears the list with the literal "Empty".
+                cmds.append(["-setproxybypassdomains", s] + (bypass.isEmpty ? ["Empty"] : bypass))
                 cmds.append(["-setwebproxy", s, "127.0.0.1", String(port)])
                 cmds.append(["-setsecurewebproxy", s, "127.0.0.1", String(port)])
                 cmds.append(["-setwebproxystate", s, "on"])
@@ -97,11 +103,21 @@ enum SystemProxy {
 
     // MARK: Passwordless sudo
 
+    /// Subcommands the sudoers rule allows without a password.
+    private static let allowedSubcommands = [
+        "-setwebproxy", "-setsecurewebproxy", "-setwebproxystate", "-setsecurewebproxystate",
+        "-setproxybypassdomains",
+    ]
+
     /// True when the sudoers rule lets us toggle the proxy without a password.
+    /// A rule installed by an older version (without -setproxybypassdomains) fails the
+    /// second check, so the next apply goes through the admin prompt and upgrades it.
     static func hasPasswordlessSudo() -> Bool {
         // -n never prompts; -l checks the policy. Exits 0 only if allowed NOPASSWD.
         Shell.run("/usr/bin/sudo",
                   ["-n", "-l", networksetup, "-setwebproxystate", "Wi-Fi", "off"]).status == 0
+            && Shell.run("/usr/bin/sudo",
+                         ["-n", "-l", networksetup, "-setproxybypassdomains", "Wi-Fi", "Empty"]).status == 0
     }
 
     /// One admin prompt: validate + install the sudoers rule, then apply the proxy
@@ -109,7 +125,7 @@ enum SystemProxy {
     private static func runAdminInstallAndApply(_ cmds: [[String]]) -> Bool {
         let user = NSUserName()
         let rule = "\(user) ALL=(root) NOPASSWD: "
-            + ["-setwebproxy", "-setsecurewebproxy", "-setwebproxystate", "-setsecurewebproxystate"]
+            + allowedSubcommands
                 .map { "\(networksetup) \($0) *" }
                 .joined(separator: ", ")
         let body = "# SwitchProxy: toggle the system web proxy without a password.\n\(rule)\n"

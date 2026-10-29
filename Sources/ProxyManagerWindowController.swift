@@ -8,6 +8,8 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
     private let onChange: () -> Void
     /// Returns true if the port change was applied (relay restarted).
     private let onApplyPort: (Int) -> Bool
+    /// Saves a new ignore list and re-applies it to the system proxy if enabled.
+    private let onApplyBypass: ([String]) -> Void
 
     private var tableView: NSTableView!
     private var networkLabel: NSTextField!
@@ -17,11 +19,13 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
     init(store: ConfigStore,
          monitor: NetworkMonitor,
          onChange: @escaping () -> Void,
-         onApplyPort: @escaping (Int) -> Bool) {
+         onApplyPort: @escaping (Int) -> Bool,
+         onApplyBypass: @escaping ([String]) -> Void) {
         self.store = store
         self.monitor = monitor
         self.onChange = onChange
         self.onApplyPort = onApplyPort
+        self.onApplyBypass = onApplyBypass
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 580, height: 360),
@@ -50,7 +54,8 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
         portField.placeholderString = "1087"
         portField.widthAnchor.constraint(equalToConstant: 80).isActive = true
         let applyPortButton = makeButton("应用", #selector(applyPort))
-        let portRow = NSStackView(views: [portTitle, portField, applyPortButton, NSView()])
+        let bypassButton = makeButton("代理忽略列表…", #selector(editBypass))
+        let portRow = NSStackView(views: [portTitle, portField, applyPortButton, NSView(), bypassButton])
         portRow.spacing = 8
         portRow.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(portRow)
@@ -183,6 +188,12 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
             alert.runModal()
         }
         refresh()
+    }
+
+    @objc private func editBypass() {
+        if let list = BypassEditor.present(current: store.bypassList), list != store.bypassList {
+            onApplyBypass(list)
+        }
     }
 
     @objc private func addConfig() {

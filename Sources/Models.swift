@@ -33,9 +33,12 @@ final class ConfigStore {
     var hideTitleBar: Bool = false
     /// Remembered intent: re-apply the system proxy on launch, clear it on quit.
     var systemProxyEnabled: Bool = false
+    /// Proxy ignore list (see `ProxyBypass`); applied to the system proxy and the relay.
+    var bypassList: [String] = ProxyBypass.defaults
 
     private let lock = NSLock()
     private var snapshot: ProxyConfig?
+    private var bypassSnapshot = ProxyBypass(ProxyBypass.defaults)
 
     init() {
         load()
@@ -52,6 +55,12 @@ final class ConfigStore {
     var activeUpstream: ProxyConfig? {
         lock.lock(); defer { lock.unlock() }
         return snapshot
+    }
+
+    /// Thread-safe read of the compiled ignore list, used by the relay.
+    var activeBypass: ProxyBypass {
+        lock.lock(); defer { lock.unlock() }
+        return bypassSnapshot
     }
 
     // MARK: Mutations (call on main thread)
@@ -104,12 +113,13 @@ final class ConfigStore {
         var listenPort: Int
         var hideTitleBar: Bool?          // optional for backward compatibility with older data
         var systemProxyEnabled: Bool?    // optional for backward compatibility with older data
+        var bypassList: [String]?        // optional for backward compatibility with older data
     }
 
     func save() {
         let p = Persisted(configs: configs, activeID: activeID, autoSwitch: autoSwitch,
                           listenPort: listenPort, hideTitleBar: hideTitleBar,
-                          systemProxyEnabled: systemProxyEnabled)
+                          systemProxyEnabled: systemProxyEnabled, bypassList: bypassList)
         if let data = try? JSONEncoder().encode(p) {
             defaults.set(data, forKey: storageKey)
         }
@@ -125,11 +135,13 @@ final class ConfigStore {
         listenPort = p.listenPort
         hideTitleBar = p.hideTitleBar ?? false
         systemProxyEnabled = p.systemProxyEnabled ?? false
+        bypassList = p.bypassList ?? ProxyBypass.defaults
     }
 
     private func refreshSnapshot() {
         lock.lock()
         snapshot = activeConfig
+        bypassSnapshot = ProxyBypass(bypassList)
         lock.unlock()
     }
 }

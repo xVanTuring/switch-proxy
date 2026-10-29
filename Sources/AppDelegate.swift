@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Relay forwards to whatever config is active right now.
         relay.activeConfigProvider = { [weak self] in self?.store.activeUpstream }
+        relay.bypassProvider = { [weak self] in self?.store.activeBypass ?? ProxyBypass([]) }
         do {
             try relay.start(port: UInt16(store.listenPort))
         } catch {
@@ -25,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Remembered intent: if the system proxy was left on, re-apply (override) on launch.
         if store.systemProxyEnabled {
-            _ = SystemProxy.enable(port: store.listenPort)
+            _ = SystemProxy.enable(port: store.listenPort, bypass: store.bypassList)
         }
 
         // A second launch asks the running instance (via this notification) to show

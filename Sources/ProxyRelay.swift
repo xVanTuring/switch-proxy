@@ -6,7 +6,7 @@ import Network
 /// tunnels each connection to the currently-active upstream (HTTP proxy, SOCKS5
 /// proxy, or direct). The system proxy points here permanently as an HTTP proxy;
 /// apps that prefer SOCKS can use socks5h://127.0.0.1:<port> on the same port.
-/// Switching the upstream is internal.
+/// Switching the upstream is internal. Targets on the ignore list always go direct.
 final class ProxyRelay {
     private var listener: NWListener?
     private let listenerQueue = DispatchQueue(label: "switchproxy.relay.listener")
@@ -18,6 +18,8 @@ final class ProxyRelay {
 
     /// Supplies the upstream to use for new connections (nil == direct).
     var activeConfigProvider: () -> ProxyConfig? = { nil }
+    /// Supplies the ignore list for new connections (matching targets go direct).
+    var bypassProvider: () -> ProxyBypass = { ProxyBypass([]) }
 
     func start(port: UInt16) throws {
         stop()
@@ -60,7 +62,7 @@ final class ProxyRelay {
     }
 
     private func accept(_ conn: NWConnection) {
-        let session = RelaySession(client: conn, upstream: activeConfigProvider())
+        let session = RelaySession(client: conn, upstream: activeConfigProvider(), bypass: bypassProvider())
         lock.lock(); sessions.insert(session); lock.unlock()
         session.onFinished = { [weak self, weak session] in
             guard let self = self, let session = session else { return }
@@ -75,6 +77,7 @@ private final class RelaySession: Hashable {
     let id = UUID()
     private let client: NWConnection
     private let upstream: ProxyConfig?
+    private let bypass: ProxyBypass
     private let queue: DispatchQueue
     private var server: NWConnection?
     private var finished = false
@@ -84,9 +87,10 @@ private final class RelaySession: Hashable {
 
     var onFinished: (() -> Void)?
 
-    init(client: NWConnection, upstream: ProxyConfig?) {
+    init(client: NWConnection, upstream: ProxyConfig?, bypass: ProxyBypass) {
         self.client = client
         self.upstream = upstream
+        self.bypass = bypass
         self.queue = DispatchQueue(label: "switchproxy.relay.session")
     }
 
@@ -282,9 +286,12 @@ private final class RelaySession: Hashable {
         guard parts.count >= 3 else { close(); return }
         let method = parts[0].uppercased()
         let target = parts[1]
+        let targetHost = method == "CONNECT"
+            ? parseHostPort(target, defaultPort: 443).0
+            : (URLComponents(string: target)?.host ?? "")
 
         // HTTP upstream: it already speaks the proxy protocol, so forward bytes verbatim.
-        if let up = upstream, up.kind == .http {
+        if let up = upstream(for: targetHost), up.kind == .http {
             var out = injectAuth(headStr: headStr, original: header, upstream: up)
             out.append(leftover)
             openServer(host: up.host, port: up.port) { [weak self] ok in
@@ -329,19 +336,25 @@ private final class RelaySession: Hashable {
 
     // MARK: Connecting
 
+    /// The upstream for a target host: nil (direct) when it is on the ignore list.
+    private func upstream(for host: String) -> ProxyConfig? {
+        bypass.matches(host) ? nil : upstream
+    }
+
     private func makeConnection(_ host: String, _ port: Int) -> NWConnection {
         let p = NWEndpoint.Port(rawValue: UInt16(clamping: port)) ?? 80
         return NWConnection(host: NWEndpoint.Host(host), port: p, using: .tcp)
     }
 
     /// Establish a raw byte tunnel to (host, port) through the active upstream
-    /// (SOCKS5 handshake, HTTP CONNECT) or directly. Used by the SOCKS inbound path
+    /// (SOCKS5 handshake, HTTP CONNECT) or directly (no upstream, or the host is on
+    /// the ignore list). Used by the SOCKS inbound path
     /// and the HTTP-inbound CONNECT path for SOCKS5/direct upstreams.
     private func dial(host: String, port: Int, completion: @escaping (Bool) -> Void) {
         var done = false
         func finish(_ ok: Bool) { if done { return }; done = true; completion(ok) }
 
-        guard let up = upstream else {
+        guard let up = upstream(for: host) else {
             openServer(host: host, port: port, completion: completion)
             return
         }
