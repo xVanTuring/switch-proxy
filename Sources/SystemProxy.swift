@@ -93,10 +93,17 @@ enum SystemProxy {
 
         if hasPasswordlessSudo() {
             var ok = true
-            for args in cmds where Shell.run("/usr/bin/sudo", ["-n", networksetup] + args).status != 0 {
-                ok = false
+            var needsAuth = false
+            for args in cmds {
+                let r = Shell.run("/usr/bin/sudo", ["-n", networksetup] + args)
+                if r.status != 0 {
+                    ok = false
+                    // An old/partial sudoers rule leaves some subcommands password-gated;
+                    // fall through to the admin prompt, which upgrades the rule and re-applies.
+                    if r.output.contains("a password is required") { needsAuth = true }
+                }
             }
-            return ok
+            if !needsAuth { return ok }
         }
         return runAdminInstallAndApply(cmds)
     }
@@ -110,14 +117,19 @@ enum SystemProxy {
     ]
 
     /// True when the sudoers rule lets us toggle the proxy without a password.
-    /// A rule installed by an older version (without -setproxybypassdomains) fails the
-    /// second check, so the next apply goes through the admin prompt and upgrades it.
+    /// Parses the full `sudo -l` rule list: `sudo -l <cmd>` exits 0 even for commands
+    /// that would require a password (they still match the user's `(ALL) ALL` entry),
+    /// so its status alone cannot tell NOPASSWD from password-gated. An old rule
+    /// without -setproxybypassdomains fails the check, so the next apply goes through
+    /// the admin prompt and upgrades it.
     static func hasPasswordlessSudo() -> Bool {
-        // -n never prompts; -l checks the policy. Exits 0 only if allowed NOPASSWD.
-        Shell.run("/usr/bin/sudo",
-                  ["-n", "-l", networksetup, "-setwebproxystate", "Wi-Fi", "off"]).status == 0
-            && Shell.run("/usr/bin/sudo",
-                         ["-n", "-l", networksetup, "-setproxybypassdomains", "Wi-Fi", "Empty"]).status == 0
+        let out = Shell.run("/usr/bin/sudo", ["-n", "-l"]).output
+        guard out.contains("NOPASSWD") else { return false }
+        // Flatten line wraps (the rule list wraps continuation lines with indentation).
+        let flat = out.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return allowedSubcommands.allSatisfy { flat.contains("\(networksetup) \($0) *") }
     }
 
     /// One admin prompt: validate + install the sudoers rule, then apply the proxy
