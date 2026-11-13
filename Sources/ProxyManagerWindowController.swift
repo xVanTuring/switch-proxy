@@ -10,6 +10,8 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
     private let onApplyPort: (Int) -> Bool
     /// Saves a new ignore list and re-applies it to the system proxy if enabled.
     private let onApplyBypass: ([String]) -> Void
+    /// Opens the egress check window for the given config.
+    private let onCheckEgress: (ProxyConfig) -> Void
 
     private var tableView: NSTableView!
     private var networkLabel: NSTextField!
@@ -20,12 +22,14 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
          monitor: NetworkMonitor,
          onChange: @escaping () -> Void,
          onApplyPort: @escaping (Int) -> Bool,
-         onApplyBypass: @escaping ([String]) -> Void) {
+         onApplyBypass: @escaping ([String]) -> Void,
+         onCheckEgress: @escaping (ProxyConfig) -> Void) {
         self.store = store
         self.monitor = monitor
         self.onChange = onChange
         self.onApplyPort = onApplyPort
         self.onApplyBypass = onApplyBypass
+        self.onCheckEgress = onCheckEgress
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 580, height: 360),
@@ -93,9 +97,10 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
         let addButton = makeButton("添加", #selector(addConfig))
         let editButton = makeButton("编辑", #selector(editSelected))
         let deleteButton = makeButton("删除", #selector(deleteSelected))
+        let checkButton = makeButton(L("Check Egress"), #selector(checkSelected))
         let bindButton = makeButton("把当前网络绑定到所选", #selector(bindSelected))
 
-        let leftStack = NSStackView(views: [addButton, editButton, deleteButton])
+        let leftStack = NSStackView(views: [addButton, editButton, deleteButton, checkButton])
         leftStack.spacing = 8
         let row = NSStackView(views: [leftStack, NSView(), bindButton])
         row.distribution = .fill
@@ -222,6 +227,14 @@ final class ProxyManagerWindowController: NSWindowController, NSTableViewDataSou
             store.remove(id: config.id)
             reloadAndNotify()
         }
+    }
+
+    @objc private func checkSelected() {
+        guard let config = selectedConfig() else {
+            beepNoSelection()
+            return
+        }
+        onCheckEgress(config)
     }
 
     @objc private func bindSelected() {

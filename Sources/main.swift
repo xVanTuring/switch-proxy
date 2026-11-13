@@ -16,7 +16,7 @@ if let other = others.first {
     exit(0)
 }
 
-// Menu-bar-only app: no Dock icon, no main menu bar.
+// Menu-bar-only app: no Dock icon; the main menu is hidden (see MainMenu.swift).
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

@@ -22,6 +22,12 @@
   同一份列表同时用于：系统代理的「忽略这些主机与域的代理设置」，以及本地中转本身（所以直接用 `socks5h://` 或 `http_proxy` 环境变量连中转的程序也会直连这些地址）。
   支持写法：域名、`*.后缀`、IP、网段（`192.168.0.0/16` 或 `169.254/16`）。只按目标地址的字面值匹配，不做 DNS 解析
 - 菜单内快速手动切换 / 直连
+- **检测出口连接**（菜单 →「检测出口连接…」）：经本地中转（即系统代理实际走的路径）检测当前出口是否可用：
+  - 出口 IP、位置、网络运营商（ipinfo.io，失败时改用 api.ip.sb）
+  - 启用了上游代理时，同时查询不走任何代理的本机直连 IP 做对比，两者相同会提示代理可能未生效
+  - IPv6 支持：访问只有 IPv6 地址的服务（api6.ipify.org，失败时依次改用 ipv6.icanhazip.com、v6.ident.me），能拿到 IPv6 地址就说明出口支持 IPv6；启用上游代理时同时显示本机直连的 IPv6 做对比
+  - Google、YouTube、GitHub、Cloudflare、Baidu 的连通性与延迟（单项超时 10 秒）
+  - 「管理代理」窗口里选中某个配置后点「检测出口」，可单独检测这个配置：经一个临时中转（系统自动分配端口）连这个配置，不切换当前正在使用的代理，检测完自动关闭临时中转
 - **「管理代理」窗口**：集中添加、编辑、删除配置，并把当前网络绑定到所选配置
 - **本地监听端口可配置**（在「管理代理」窗口里修改；改端口会自动重启中转，若系统代理已开启会自动重新指向新端口）
 - **开机自启**（菜单内开关，基于 `SMAppService` 登录项）
@@ -78,6 +84,10 @@ open SwitchProxy.xcodeproj
 | `ProxyManagerWindowController.swift` | 「管理代理」窗口：端口设置 + 配置列表 + 增删改 + 绑定网络 |
 | `ConfigEditor.swift` | 添加/编辑配置的表单 |
 | `BypassEditor.swift` | 编辑代理忽略列表的表单 |
+| `EgressChecker.swift` | 出口检测：经本地中转请求各站点、查询出口 IP 信息 |
+| `EgressCheckWindowController.swift` | 「出口检测」窗口 |
+| `MainMenu.swift` | 隐藏的主菜单，让窗口和对话框里的 ⌘C / ⌘V / ⌘X / ⌘A / ⌘Z / ⌘W / ⌘M 等快捷键生效 |
+| `L.swift` + `*.lproj/Localizable.strings` | 多语言（中文 / 英文）文案查找 |
 | `LaunchAtLogin.swift` | 开机自启（`SMAppService` 登录项）封装 |
 
 ## 已知限制

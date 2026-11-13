@@ -20,6 +20,9 @@ final class ProxyRelay {
     var activeConfigProvider: () -> ProxyConfig? = { nil }
     /// Supplies the ignore list for new connections (matching targets go direct).
     var bypassProvider: () -> ProxyBypass = { ProxyBypass([]) }
+    /// Called on the main queue with the actually bound port once listening
+    /// (useful with port 0), or nil when the listener fails / is cancelled.
+    var onReady: ((UInt16?) -> Void)?
 
     func start(port: UInt16) throws {
         stop()
@@ -34,10 +37,15 @@ final class ProxyRelay {
         listener.newConnectionHandler = { [weak self] conn in
             self?.accept(conn)
         }
-        listener.stateUpdateHandler = { [weak self] state in
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
             switch state {
-            case .ready: self?.running = true
-            case .failed, .cancelled: self?.running = false
+            case .ready:
+                self?.running = true
+                let bound = listener?.port?.rawValue
+                DispatchQueue.main.async { self?.onReady?(bound) }
+            case .failed, .cancelled:
+                self?.running = false
+                DispatchQueue.main.async { self?.onReady?(nil) }
             default: break
             }
         }

@@ -14,6 +14,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     var onHideStatusItem: (() -> Void)?
 
     private var managerWindowController: ProxyManagerWindowController?
+    private var egressWindowController: EgressCheckWindowController?
 
     init(store: ConfigStore, relay: ProxyRelay, monitor: NetworkMonitor) {
         self.store = store
@@ -58,6 +59,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(item("管理代理…", #selector(openManager)))
+        menu.addItem(item(L("Check Egress Connection…"), #selector(openEgressCheck)))
 
         menu.addItem(.separator())
 
@@ -122,6 +124,21 @@ final class MenuController: NSObject, NSMenuDelegate {
         presentManager()
     }
 
+    /// Show the egress check window and start a fresh check.
+    @objc private func openEgressCheck() {
+        presentEgressCheck(.current)
+    }
+
+    private func presentEgressCheck(_ target: EgressCheckWindowController.Target) {
+        if egressWindowController == nil {
+            egressWindowController = EgressCheckWindowController(store: store, relay: relay)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        egressWindowController?.showWindow(nil)
+        egressWindowController?.window?.makeKeyAndOrderFront(nil)
+        egressWindowController?.check(target)
+    }
+
     /// Show (and create if needed) the manager window. Also used for "reopen" and
     /// the single-instance "show on second launch" behavior.
     func presentManager() {
@@ -131,7 +148,8 @@ final class MenuController: NSObject, NSMenuDelegate {
                 monitor: monitor,
                 onChange: { [weak self] in self?.onApplyAuto?() },
                 onApplyPort: { [weak self] port in self?.applyListenPort(port) ?? false },
-                onApplyBypass: { [weak self] list in self?.applyBypassList(list) }
+                onApplyBypass: { [weak self] list in self?.applyBypassList(list) },
+                onCheckEgress: { [weak self] config in self?.presentEgressCheck(.config(config)) }
             )
         }
         NSApp.activate(ignoringOtherApps: true)

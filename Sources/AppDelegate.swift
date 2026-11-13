@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Hidden main menu so ⌘C / ⌘V / ⌘W etc. work in our windows and dialogs.
+        MainMenu.install()
+
         // Relay forwards to whatever config is active right now.
         relay.activeConfigProvider = { [weak self] in self?.store.activeUpstream }
         relay.bypassProvider = { [weak self] in self?.store.activeBypass ?? ProxyBypass([]) }
